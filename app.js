@@ -1,394 +1,296 @@
 /* =========================================================
    CENTRAL DE FORMULÁRIOS - UNILOG EXPRESS
-   Dados carregados de forms.json no próprio GitHub Pages
+
+   Fontes de dados, em paralelo:
+   1. forms.json no próprio GitHub Pages (rápido e confiável;
+      atualizado pelo GitHub Actions como cópia de segurança).
+   2. Planilha via Apps Script (CONFIG.API_URL), em tempo real.
+      Se responder com dados válidos, substitui a lista exibida.
+      Se falhar (bloqueio, login, timeout), é ignorada sem erro.
+
+   Estados distintos: carregando, erro técnico (com "Tentar
+   novamente"), catálogo vazio e pesquisa sem resultados.
    ========================================================= */
 
-var formularios = [];
+(function () {
+  "use strict";
 
+  var Core = window.CatalogoCore;
+  var CONFIG = window.CONFIG || {};
 
-/* =========================================================
-   ELEMENTOS
-   ========================================================= */
+  var TIMEOUT_LOCAL_MS = 12000;
+  var TIMEOUT_PLANILHA_MS = 8000;
 
-var catalogo = document.getElementById("catalogo");
-var searchInput = document.getElementById("searchInput");
-var clearSearch = document.getElementById("clearSearch");
+  var formularios = [];
+  var geracao = 0;
 
+  var catalogo, searchInput, clearSearch, statusBusca;
 
-/* =========================================================
-   SEGURANÇA / TEXTO
-   ========================================================= */
+  /* ---------- Requisição JSON com timeout (XHR: compatível com Safari antigo) ---------- */
 
-function escaparHTML(valor) {
-  if (valor === null || valor === undefined) {
-    return "";
-  }
+  function requisitarJSON(url, timeoutMs, callback) {
+    var xhr = new XMLHttpRequest();
+    var concluido = false;
 
-  return String(valor)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
-
-/* =========================================================
-   VALIDAR URL
-   ========================================================= */
-
-function urlValida(url) {
-  try {
-    var endereco = new URL(url);
-
-    return (
-      endereco.protocol === "https:" ||
-      endereco.protocol === "http:"
-    );
-  } catch (erro) {
-    return false;
-  }
-}
-
-
-/* =========================================================
-   ESTADOS DA INTERFACE
-   ========================================================= */
-
-function mostrarCarregando() {
-  catalogo.innerHTML =
-    '<div class="estado">Carregando formulários...</div>';
-}
-
-
-function mostrarEstadoVazio(
-  titulo,
-  descricao
-) {
-  titulo = titulo || "Nenhum formulário cadastrado";
-  descricao = descricao || "Os formulários disponíveis serão exibidos aqui.";
-
-  catalogo.innerHTML =
-    '<div class="estado-vazio">' +
-      '<div class="icone-vazio">' +
-        '<span class="material-symbols-outlined">description</span>' +
-      '</div>' +
-      '<strong>' + escaparHTML(titulo) + '</strong>' +
-      '<p>' + escaparHTML(descricao) + '</p>' +
-    '</div>';
-}
-
-
-/* =========================================================
-   CARREGAR forms.json
-   ========================================================= */
-
-function carregarFormularios() {
-  mostrarCarregando();
-
-  var xhr = new XMLHttpRequest();
-  var url = "forms.json?t=" + new Date().getTime();
-
-  xhr.open("GET", url, true);
-  xhr.timeout = 12000;
-
-  xhr.onreadystatechange = function () {
-    if (xhr.readyState !== 4) {
-      return;
+    function fim(erro, dados) {
+      if (concluido) return;
+      concluido = true;
+      callback(erro, dados);
     }
 
-    if (xhr.status >= 200 && xhr.status < 300) {
+    try {
+      xhr.open("GET", url, true);
+    } catch (e) {
+      fim({ tipo: "rede", detalhe: e.message });
+      return;
+    }
+    xhr.timeout = timeoutMs;
+
+    xhr.onload = function () {
+      if (xhr.status < 200 || xhr.status >= 300) {
+        fim({ tipo: "http", detalhe: "HTTP " + xhr.status });
+        return;
+      }
       try {
-        var dados = JSON.parse(xhr.responseText);
-
-        if (!Array.isArray(dados)) {
-          throw new Error("forms.json não contém uma lista válida.");
-        }
-
-        formularios = dados.filter(function (item) {
-          return item && item.ativo !== false;
-        });
-
-        if (formularios.length === 0) {
-          mostrarEstadoVazio();
-          return;
-        }
-
-        renderizarCatalogo(formularios);
-      } catch (erro) {
-        console.error("Erro ao processar forms.json:", erro);
-        mostrarEstadoVazio();
+        fim(null, Core.validarCatalogo(JSON.parse(xhr.responseText)));
+      } catch (e) {
+        fim({ tipo: "dados", detalhe: e.message });
       }
+    };
+    xhr.onerror = function () { fim({ tipo: "rede", detalhe: "Falha de rede" }); };
+    xhr.ontimeout = function () { fim({ tipo: "timeout", detalhe: "Tempo limite excedido" }); };
 
-      return;
-    }
+    xhr.send();
+  }
 
-    console.error(
-      "Erro ao carregar forms.json. HTTP:",
-      xhr.status
+  function comAntiCache(url) {
+    return url + (url.indexOf("?") === -1 ? "?" : "&") + "t=" + Date.now();
+  }
+
+  /* ---------- Estados da interface ---------- */
+
+  function blocoEstado(icone, titulo, descricao, botao) {
+    return (
+      '<div class="estado-vazio"' + (botao && botao.alerta ? ' role="alert"' : "") + ">" +
+        '<div class="icone-vazio"><span class="material-symbols-outlined" aria-hidden="true">' +
+          Core.escaparHTML(icone) + "</span></div>" +
+        "<strong>" + Core.escaparHTML(titulo) + "</strong>" +
+        "<p>" + Core.escaparHTML(descricao) + "</p>" +
+        (botao
+          ? '<button type="button" class="botao-estado" id="' + botao.id + '">' +
+              Core.escaparHTML(botao.texto) + "</button>"
+          : "") +
+      "</div>"
     );
+  }
 
-    mostrarEstadoVazio();
-  };
+  function mostrarCarregando() {
+    catalogo.setAttribute("aria-busy", "true");
+    catalogo.innerHTML = '<div class="estado">Carregando formulários...</div>';
+  }
 
-  xhr.onerror = function () {
-    console.error("Falha de rede ao carregar forms.json.");
-    mostrarEstadoVazio();
-  };
+  function mostrarErro() {
+    catalogo.removeAttribute("aria-busy");
+    catalogo.innerHTML = blocoEstado(
+      "cloud_off",
+      "Não foi possível carregar os formulários",
+      "Verifique sua conexão com a internet e tente novamente.",
+      { id: "botaoTentarNovamente", texto: "Tentar novamente", alerta: true }
+    );
+    document.getElementById("botaoTentarNovamente").addEventListener("click", carregar);
+    anunciar("Falha ao carregar os formulários.");
+  }
 
-  xhr.ontimeout = function () {
-    console.error("Tempo limite ao carregar forms.json.");
-    mostrarEstadoVazio();
-  };
+  function mostrarCatalogoVazio() {
+    catalogo.removeAttribute("aria-busy");
+    catalogo.innerHTML = blocoEstado(
+      "description",
+      "Nenhum formulário disponível",
+      "No momento não há formulários ativos no catálogo."
+    );
+    anunciar("Nenhum formulário disponível.");
+  }
 
-  xhr.send();
-}
+  function mostrarSemResultados(termo) {
+    catalogo.innerHTML = blocoEstado(
+      "search_off",
+      "Nenhum formulário encontrado",
+      "Nenhum resultado para “" + termo + "”. Tente outro termo.",
+      { id: "botaoLimparResultados", texto: "Limpar pesquisa" }
+    );
+    document.getElementById("botaoLimparResultados").addEventListener("click", limparPesquisa);
+    anunciar("Nenhum formulário encontrado.");
+  }
 
+  function anunciar(texto) {
+    if (statusBusca) statusBusca.textContent = texto;
+  }
 
-/* =========================================================
-   AGRUPAR POR CATEGORIA
-   ========================================================= */
+  /* ---------- Renderização ---------- */
 
-function agruparPorCategoria(lista) {
-  return lista.reduce(
-    function (grupos, formulario) {
-      var categoria = String(
-        formulario.categoria || "Outros"
-      ).trim() || "Outros";
+  function criarCard(f) {
+    var nome = Core.escaparHTML(f.nome || "Formulário");
+    var descricao = Core.escaparHTML(f.descricao || "");
+    var icone = Core.escaparHTML(f.icone || "description");
+    var url = String(f.url || "").trim();
 
-      if (!grupos[categoria]) {
-        grupos[categoria] = [];
-      }
+    var miolo =
+      '<div class="card-icon"><span class="material-symbols-outlined" aria-hidden="true">' + icone + "</span></div>" +
+      '<div class="card-content"><h3>' + nome + "</h3>" +
+        (descricao ? "<p>" + descricao + "</p>" : "") + "</div>";
 
-      grupos[categoria].push(formulario);
-
-      return grupos;
-    },
-    {}
-  );
-}
-
-
-/* =========================================================
-   ORDENAR
-   ========================================================= */
-
-function ordenarFormularios(lista) {
-  return lista.slice().sort(
-    function (a, b) {
-      var ordemA = Number(a.ordem) || 999999;
-      var ordemB = Number(b.ordem) || 999999;
-
-      if (ordemA !== ordemB) {
-        return ordemA - ordemB;
-      }
-
-      return String(a.nome || "").localeCompare(
-        String(b.nome || ""),
-        "pt-BR"
+    if (!Core.urlValida(url)) {
+      return (
+        '<div class="card card-indisponivel" aria-disabled="true">' + miolo +
+          '<span class="card-aviso">Link indisponível</span></div>'
       );
     }
-  );
-}
 
-
-/* =========================================================
-   CARD
-   ========================================================= */
-
-function criarCard(formulario) {
-  var nome = escaparHTML(
-    formulario.nome || "Formulário"
-  );
-
-  var descricao = escaparHTML(
-    formulario.descricao || ""
-  );
-
-  var icone = escaparHTML(
-    formulario.icone || "description"
-  );
-
-  var url = String(
-    formulario.url || ""
-  ).trim();
-
-  if (!urlValida(url)) {
     return (
-      '<div class="card">' +
-        '<div class="card-icon">' +
-          '<span class="material-symbols-outlined">' + icone + '</span>' +
-        '</div>' +
-        '<div class="card-content">' +
-          '<h3>' + nome + '</h3>' +
-          (descricao ? '<p>' + descricao + '</p>' : '') +
-        '</div>' +
-      '</div>'
+      '<a class="card" href="' + Core.escaparHTML(url) + '" rel="noopener noreferrer">' + miolo +
+        '<div class="card-arrow"><span class="material-symbols-outlined" aria-hidden="true">chevron_right</span></div>' +
+      "</a>"
     );
   }
 
-  return (
-    '<a class="card" href="' + escaparHTML(url) + '" rel="noopener noreferrer">' +
-      '<div class="card-icon">' +
-        '<span class="material-symbols-outlined">' + icone + '</span>' +
-      '</div>' +
-      '<div class="card-content">' +
-        '<h3>' + nome + '</h3>' +
-        (descricao ? '<p>' + descricao + '</p>' : '') +
-      '</div>' +
-      '<div class="card-arrow">' +
-        '<span class="material-symbols-outlined">chevron_right</span>' +
-      '</div>' +
-    '</a>'
-  );
-}
-
-
-/* =========================================================
-   RENDERIZAR
-   ========================================================= */
-
-function renderizarCatalogo(lista) {
-  if (!lista || lista.length === 0) {
-    mostrarEstadoVazio();
-    return;
-  }
-
-  var grupos = agruparPorCategoria(lista);
-
-  var categorias = Object.keys(grupos)
-    .sort(function (a, b) {
+  function renderizar(lista) {
+    var grupos = Core.agruparPorCategoria(lista);
+    var categorias = Object.keys(grupos).sort(function (a, b) {
       return a.localeCompare(b, "pt-BR");
     });
 
-  var html = categorias
-    .map(function (categoria) {
-      var itens = ordenarFormularios(
-        grupos[categoria]
-      );
-
-      var cards = itens
-        .map(criarCard)
-        .join("");
-
+    catalogo.innerHTML = categorias.map(function (c) {
       return (
-        '<section class="categoria">' +
-          '<div class="categoria-titulo">' + escaparHTML(categoria) + '</div>' +
-          '<div class="cards">' + cards + '</div>' +
-        '</section>'
+        '<section class="categoria" aria-label="' + Core.escaparHTML(c) + '">' +
+          '<h2 class="categoria-titulo">' + Core.escaparHTML(c) + "</h2>" +
+          '<div class="cards">' + Core.ordenar(grupos[c]).map(criarCard).join("") + "</div>" +
+        "</section>"
       );
-    })
-    .join("");
-
-  catalogo.innerHTML = html;
-}
-
-
-/* =========================================================
-   NORMALIZAR BUSCA
-   ========================================================= */
-
-function normalizarTexto(valor) {
-  var texto = String(valor || "").toLowerCase().trim();
-
-  if (texto.normalize) {
-    texto = texto
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "");
+    }).join("");
   }
 
-  return texto;
-}
+  function atualizarTela() {
+    catalogo.removeAttribute("aria-busy");
 
-
-/* =========================================================
-   PESQUISA
-   ========================================================= */
-
-function filtrarFormularios() {
-  var termo = normalizarTexto(
-    searchInput.value
-  );
-
-  clearSearch.classList.toggle(
-    "visible",
-    termo.length > 0
-  );
-
-  if (!termo) {
-    renderizarCatalogo(formularios);
-    return;
-  }
-
-  var filtrados = formularios.filter(
-    function (formulario) {
-      var nome = normalizarTexto(
-        formulario.nome
-      );
-
-      var categoria = normalizarTexto(
-        formulario.categoria
-      );
-
-      var descricao = normalizarTexto(
-        formulario.descricao
-      );
-
-      return (
-        nome.indexOf(termo) !== -1 ||
-        categoria.indexOf(termo) !== -1 ||
-        descricao.indexOf(termo) !== -1
-      );
+    if (formularios.length === 0) {
+      mostrarCatalogoVazio();
+      return;
     }
-  );
 
-  if (filtrados.length === 0) {
-    mostrarEstadoVazio(
-      "Nenhum formulário encontrado",
-      "Tente pesquisar utilizando outro termo."
+    var termo = searchInput.value;
+    var lista = Core.filtrar(formularios, termo);
+    clearSearch.classList.toggle("visible", Core.normalizarTexto(termo).length > 0);
+
+    if (lista.length === 0) {
+      mostrarSemResultados(termo.trim());
+      return;
+    }
+
+    renderizar(lista);
+    anunciar(
+      Core.normalizarTexto(termo)
+        ? lista.length + (lista.length === 1 ? " formulário encontrado." : " formulários encontrados.")
+        : ""
     );
-
-    return;
   }
 
-  renderizarCatalogo(filtrados);
-}
+  /* ---------- Carregamento ---------- */
 
+  function carregar() {
+    var minhaGeracao = ++geracao;
+    var local = { pronto: false, dados: null };
+    var planilha = { pronto: false, aplicada: false };
+    var temPlanilha = Core.urlValida(CONFIG.API_URL);
 
-/* =========================================================
-   EVENTOS
-   ========================================================= */
+    formularios = [];
+    mostrarCarregando();
 
-function configurarEventos() {
-  searchInput.addEventListener(
-    "input",
-    filtrarFormularios
-  );
+    function decidir() {
+      if (minhaGeracao !== geracao) return; /* resposta antiga, ignorada */
+      if (planilha.aplicada) return;
 
-  clearSearch.addEventListener(
-    "click",
-    function () {
-      searchInput.value = "";
+      if (local.dados) {
+        formularios = Core.ativos(local.dados);
+        document.body.setAttribute("data-fonte", "forms.json");
+        atualizarTela();
+        return;
+      }
 
-      clearSearch.classList.remove(
-        "visible"
-      );
-
-      renderizarCatalogo(formularios);
-      searchInput.focus();
+      /* forms.json falhou: só mostra erro quando a planilha também tiver terminado. */
+      if (local.pronto && (!temPlanilha || planilha.pronto)) {
+        mostrarErro();
+      }
     }
-  );
-}
 
+    requisitarJSON(comAntiCache("forms.json"), TIMEOUT_LOCAL_MS, function (erro, dados) {
+      local.pronto = true;
+      if (erro) {
+        console.error("forms.json:", erro.tipo, erro.detalhe);
+      } else {
+        local.dados = dados;
+      }
+      decidir();
+    });
 
-/* =========================================================
-   INICIAR
-   ========================================================= */
+    if (!temPlanilha) return;
 
-document.addEventListener(
-  "DOMContentLoaded",
-  function () {
-    configurarEventos();
-    carregarFormularios();
+    requisitarJSON(comAntiCache(CONFIG.API_URL), TIMEOUT_PLANILHA_MS, function (erro, dados) {
+      planilha.pronto = true;
+      if (minhaGeracao !== geracao) return;
+
+      var ativosPlanilha = erro ? [] : Core.ativos(dados);
+
+      /* Só substitui se a planilha trouxe ao menos um formulário ativo:
+         uma resposta vazia por falha momentânea não apaga o catálogo. */
+      if (!erro && ativosPlanilha.length > 0) {
+        planilha.aplicada = true;
+        formularios = ativosPlanilha;
+        document.body.setAttribute("data-fonte", "planilha");
+        atualizarTela();
+        return;
+      }
+
+      if (erro) console.warn("Planilha indisponível, usando forms.json:", erro.tipo, erro.detalhe);
+      decidir();
+    });
   }
-);
+
+  /* ---------- Pesquisa ---------- */
+
+  function limparPesquisa() {
+    searchInput.value = "";
+    atualizarTela();
+    searchInput.focus();
+  }
+
+  function iniciar() {
+    catalogo = document.getElementById("catalogo");
+    searchInput = document.getElementById("searchInput");
+    clearSearch = document.getElementById("clearSearch");
+    statusBusca = document.getElementById("statusBusca");
+
+    searchInput.addEventListener("input", function () {
+      if (formularios.length) atualizarTela();
+    });
+
+    searchInput.addEventListener("keydown", function (e) {
+      if ((e.key === "Escape" || e.key === "Esc") && searchInput.value) {
+        e.preventDefault();
+        limparPesquisa();
+      }
+    });
+
+    clearSearch.addEventListener("click", limparPesquisa);
+
+    carregar();
+  }
+
+  /* Exposto para os testes automatizados. */
+  window.CentralFormularios = { carregar: carregar, iniciar: iniciar };
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", iniciar);
+  } else {
+    iniciar();
+  }
+})();

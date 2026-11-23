@@ -47,7 +47,7 @@
   <!-- CSS -->
   <link
     rel="stylesheet"
-    href="style.css?v=20260814-6"
+    href="style.css?v=20261123-1"
   >
 </head>
 
@@ -107,7 +107,7 @@
           aria-label="Limpar pesquisa"
           title="Limpar pesquisa"
         >
-          <span class="material-symbols-outlined">
+          <span class="material-symbols-outlined" aria-hidden="true">
             close
           </span>
         </button>
@@ -117,11 +117,15 @@
     </section>
 
 
+    <!-- Anúncios para leitores de tela (resultado da pesquisa) -->
+    <div id="statusBusca" class="visualmente-oculto" role="status" aria-live="polite"></div>
+
     <!-- CATÁLOGO -->
     <section
       id="catalogo"
       class="catalogo"
-      aria-live="polite"
+      aria-label="Formulários"
+      aria-busy="true"
     >
 
       <div class="estado">
@@ -140,7 +144,9 @@
 
 
   <!-- APLICAÇÃO -->
-  <script src="app.js?v=20260814-7"></script>
+  <script src="config.js?v=20261123-1"></script>
+  <script src="catalogo-core.js?v=20261123-1"></script>
+  <script src="app.js?v=20261123-1"></script>
 
 </body>
 

@@ -62,31 +62,32 @@
     }
 
     .linha {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
       padding: 12px 0;
       border-bottom: 1px solid #eeeeef;
       word-break: break-word;
-      font-size: 16px;
+      font-size: 15px;
       line-height: 1.45;
     }
 
-    .linha:last-child {
-      border-bottom: 0;
+    .linha:last-child { border-bottom: 0; }
+
+    .selo {
+      flex-shrink: 0;
+      min-width: 74px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      text-align: center;
     }
 
-    .ok {
-      color: var(--ok);
-      font-weight: 700;
-    }
-
-    .aviso {
-      color: var(--aviso);
-      font-weight: 700;
-    }
-
-    .erro {
-      color: var(--erro);
-      font-weight: 700;
-    }
+    .selo.ok { background: #eaf4ec; color: var(--ok); }
+    .selo.aviso { background: #fdf3dc; color: var(--aviso); }
+    .selo.erro { background: #fcebea; color: var(--erro); }
+    .selo.info { background: #eef0f3; color: var(--cinza); }
 
     .resultado-final {
       margin-top: 18px;
@@ -96,22 +97,59 @@
       line-height: 1.45;
     }
 
-    .resultado-final.ok {
-      background: #eaf4ec;
+    .resultado-final.ok { background: #eaf4ec; color: var(--ok); }
+    .resultado-final.aviso { background: #fdf3dc; color: var(--aviso); }
+    .resultado-final.erro { background: #fcebea; color: var(--erro); }
+
+    .acoes {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 0 0 14px;
     }
 
-    .resultado-final.erro {
-      background: #fcebea;
-    }
-
-    details {
-      margin-top: 18px;
-    }
-
-    summary {
-      cursor: pointer;
+    .botao {
+      display: inline-flex;
+      align-items: center;
+      min-height: 44px;
+      padding: 10px 18px;
+      border: 1px solid var(--cinza);
+      border-radius: 10px;
+      background: #fff;
+      color: var(--cinza);
+      font: inherit;
+      font-size: 15px;
       font-weight: 700;
+      text-decoration: none;
+      cursor: pointer;
     }
+
+    .botao.principal {
+      border-color: var(--vermelho);
+      background: var(--vermelho);
+      color: #fff;
+    }
+
+    .botao:focus-visible, summary:focus-visible {
+      outline: 3px solid var(--cinza);
+      outline-offset: 2px;
+    }
+
+    .botao[disabled] { opacity: 0.6; cursor: wait; }
+
+    .nota {
+      margin: 14px 0 0;
+      color: #747681;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    table { width: 100%; border-collapse: collapse; margin-top: 4px; font-size: 14px; }
+    td { padding: 4px 0; }
+    td:last-child { text-align: right; font-weight: 700; }
+
+    details { margin-top: 18px; }
+    summary { cursor: pointer; font-weight: 700; }
 
     pre {
       margin: 12px 0 0;
@@ -131,182 +169,213 @@
   <main class="box">
     <h1>Diagnóstico do Catálogo</h1>
     <p class="subtitulo">
-      Teste da arquitetura atual: GitHub Pages → forms.json → renderização do catálogo.
+      Verifica o forms.json publicado, a planilha em tempo real e a integridade dos registros.
     </p>
 
-    <div id="status"></div>
+    <div class="acoes">
+      <button type="button" id="repetir" class="botao principal">Repetir diagnóstico</button>
+      <a class="botao" href="https://github.com/srcarneiro1/catalogo-formularios-unilog/actions/workflows/sync-catalog.yml" target="_blank" rel="noopener noreferrer">Gerenciar automações</a>
+      <a class="botao" href="./">Voltar ao catálogo</a>
+    </div>
+
+    <div id="status" aria-live="polite"></div>
     <div id="final"></div>
     <div id="detalhes"></div>
+
+    <p class="nota">
+      “Gerenciar automações” abre a página do workflow no GitHub. Ativar ou executar a sincronização
+      exige uma conta com permissão no repositório.
+    </p>
   </main>
 
+  <script src="config.js?v=20261123-1"></script>
+  <script src="catalogo-core.js?v=20261123-1"></script>
   <script>
     (function () {
+      "use strict";
+
+      var Core = window.CatalogoCore;
+      var CONFIG = window.CONFIG || {};
       var statusEl = document.getElementById("status");
       var finalEl = document.getElementById("final");
       var detalhesEl = document.getElementById("detalhes");
-      var erros = 0;
-      var avisos = 0;
+      var botao = document.getElementById("repetir");
+      var cont;
 
-      function registrar(texto, classe) {
-        var div = document.createElement("div");
-        div.className = "linha" + (classe ? " " + classe : "");
-        div.textContent = texto;
-        statusEl.appendChild(div);
+      var ROTULOS = { ok: "OK", aviso: "ATENÇÃO", erro: "ERRO", info: "INFO" };
+
+      function registrar(nivel, texto, extraNode) {
+        if (nivel === "erro") cont.erros++;
+        if (nivel === "aviso") cont.avisos++;
+        var linha = document.createElement("div");
+        linha.className = "linha";
+        var selo = document.createElement("span");
+        selo.className = "selo " + nivel;
+        selo.textContent = ROTULOS[nivel];
+        var corpo = document.createElement("div");
+        corpo.textContent = texto;
+        if (extraNode) corpo.appendChild(extraNode);
+        linha.appendChild(selo);
+        linha.appendChild(corpo);
+        statusEl.appendChild(linha);
       }
 
-      function falhar(texto) {
-        erros += 1;
-        registrar(texto, "erro");
+      function requisitar(url, timeoutMs) {
+        return new Promise(function (resolve) {
+          var xhr = new XMLHttpRequest();
+          var inicio = Date.now();
+          xhr.open("GET", url + (url.indexOf("?") === -1 ? "?" : "&") + "t=" + Date.now(), true);
+          xhr.timeout = timeoutMs;
+          xhr.onload = function () {
+            var r = { status: xhr.status, ms: Date.now() - inicio, texto: xhr.responseText };
+            if (xhr.status < 200 || xhr.status >= 300) { r.erro = "HTTP " + xhr.status; resolve(r); return; }
+            try { r.dados = JSON.parse(xhr.responseText); }
+            catch (e) { r.erro = "resposta não é JSON válido"; }
+            resolve(r);
+          };
+          xhr.onerror = function () { resolve({ erro: "falha de rede ou bloqueio do navegador (CORS)" }); };
+          xhr.ontimeout = function () { resolve({ erro: "tempo limite de " + (timeoutMs / 1000) + " s" }); };
+          xhr.send();
+        });
       }
 
-      function avisar(texto) {
-        avisos += 1;
-        registrar(texto, "aviso");
+      function tabelaCategorias(porCategoria) {
+        var t = document.createElement("table");
+        Object.keys(porCategoria).sort(function (a, b) { return a.localeCompare(b, "pt-BR"); })
+          .forEach(function (c) {
+            var tr = t.insertRow();
+            tr.insertCell().textContent = c;
+            tr.insertCell().textContent = porCategoria[c];
+          });
+        return t;
       }
 
-      function sucesso(texto) {
-        registrar(texto, "ok");
+      function auditarERegistrar(dados) {
+        var a = Core.auditar(dados);
+        registrar("ok", "Estrutura válida: " + a.total + " registro(s), " + a.ativos + " ativo(s), " + a.inativos + " inativo(s).");
+
+        if (a.ativos === 0) registrar("aviso", "Nenhum formulário ativo: o catálogo aparecerá vazio.");
+
+        registrar(a.idsDuplicados.length ? "erro" : "ok",
+          a.idsDuplicados.length ? "IDs duplicados: " + a.idsDuplicados.join(", ") + "." : "Nenhum ID duplicado.");
+
+        registrar(a.incompletos.length ? "erro" : "ok",
+          a.incompletos.length
+            ? "Registros incompletos: " + a.incompletos.map(function (i) { return i.rotulo + " (falta " + i.faltando.join(", ") + ")"; }).join("; ") + "."
+            : "Todos os registros têm id, nome, categoria e URL.");
+
+        registrar(a.urlsInvalidas.length ? "erro" : "ok",
+          a.urlsInvalidas.length ? "URLs malformadas: " + a.urlsInvalidas.join(", ") + "." : "Todas as URLs são bem formadas.");
+
+        registrar(a.linksDeEdicao.length ? "aviso" : "ok",
+          a.linksDeEdicao.length
+            ? "Link de edição em vez de link de resposta: " + a.linksDeEdicao.join(", ") + ". Quem não for editor do formulário verá pedido de acesso."
+            : "Nenhum link de edição do Google Forms.");
+
+        registrar("info", "Formulários ativos por categoria:", tabelaCategorias(a.porCategoria));
+        return a;
       }
 
-      function urlValida(url) {
-        try {
-          var endereco = new URL(String(url || ""));
-          return endereco.protocol === "https:" || endereco.protocol === "http:";
-        } catch (erro) {
-          return false;
-        }
+      function assinatura(lista) {
+        return JSON.stringify(Core.ordenar(Core.ativos(lista || [])).map(function (f) {
+          return [f.id, f.nome, f.categoria, f.url];
+        }));
       }
 
       function finalizar() {
         var div = document.createElement("div");
-
-        if (erros === 0) {
-          div.className = "resultado-final ok";
-          div.textContent = avisos === 0
-            ? "CATÁLOGO APTO: todos os testes foram concluídos com sucesso."
-            : "CATÁLOGO APTO: não foram encontrados erros. Há " + avisos + " aviso(s) para revisão.";
-        } else {
+        if (cont.erros) {
           div.className = "resultado-final erro";
-          div.textContent = "CATÁLOGO COM FALHA: foram encontrados " + erros + " erro(s).";
+          div.textContent = "CATÁLOGO COM FALHA: " + cont.erros + " erro(s) e " + cont.avisos + " aviso(s).";
+        } else if (cont.avisos) {
+          div.className = "resultado-final aviso";
+          div.textContent = "CATÁLOGO APTO COM RESSALVAS: " + cont.avisos + " aviso(s) para revisão.";
+        } else {
+          div.className = "resultado-final ok";
+          div.textContent = "CATÁLOGO APTO: todas as verificações passaram.";
         }
-
         finalEl.innerHTML = "";
         finalEl.appendChild(div);
+        botao.disabled = false;
+        botao.textContent = "Repetir diagnóstico";
       }
 
-      sucesso("1. GitHub Pages acessível.");
-      sucesso("2. JavaScript local executado.");
+      function executar() {
+        cont = { erros: 0, avisos: 0 };
+        statusEl.innerHTML = "";
+        finalEl.innerHTML = "";
+        detalhesEl.innerHTML = "";
+        botao.disabled = true;
+        botao.textContent = "Verificando...";
 
-      var xhr = new XMLHttpRequest();
-      var url = "forms.json?t=" + new Date().getTime();
-
-      registrar("3. Solicitando forms.json no próprio GitHub Pages...");
-
-      xhr.open("GET", url, true);
-      xhr.timeout = 12000;
-
-      xhr.onreadystatechange = function () {
-        if (xhr.readyState !== 4) {
-          return;
-        }
-
-        if (xhr.status < 200 || xhr.status >= 300) {
-          falhar("4. Não foi possível acessar forms.json. HTTP " + xhr.status + ".");
+        if (!Core) {
+          registrar("erro", "catalogo-core.js não carregou. O catálogo também não funcionará.");
           finalizar();
           return;
         }
+        registrar("ok", "Scripts da página carregados.");
 
-        sucesso("4. forms.json acessível. HTTP " + xhr.status + ".");
+        var temPlanilha = Core.urlValida(CONFIG.API_URL);
 
-        var dados;
+        Promise.all([
+          requisitar("forms.json", 12000),
+          temPlanilha ? requisitar(CONFIG.API_URL, 10000) : Promise.resolve(null)
+        ]).then(function (res) {
+          var local = res[0], planilha = res[1];
 
-        try {
-          dados = JSON.parse(xhr.responseText);
-          sucesso("5. JSON válido.");
-        } catch (erro) {
-          falhar("5. forms.json contém JSON inválido: " + erro.message);
-          finalizar();
-          return;
-        }
-
-        if (!Array.isArray(dados)) {
-          falhar("6. A raiz do forms.json não é uma lista.");
-          finalizar();
-          return;
-        }
-
-        sucesso("6. Estrutura válida: lista com " + dados.length + " registro(s).");
-
-        var ativos = dados.filter(function (item) {
-          return item && item.ativo !== false;
-        });
-
-        if (ativos.length === 0) {
-          avisar("7. Nenhum formulário ativo foi encontrado.");
-        } else {
-          sucesso("7. " + ativos.length + " formulário(s) ativo(s) encontrado(s).");
-        }
-
-        var incompletos = [];
-        var urlsInvalidas = [];
-
-        ativos.forEach(function (item, indice) {
-          var identificador = item && (item.nome || item.id || ("registro " + (indice + 1)));
-
-          if (!item || !String(item.nome || "").trim() || !String(item.url || "").trim()) {
-            incompletos.push(identificador);
+          registrar("info", "forms.json (cópia publicada no GitHub Pages)");
+          if (local.erro) {
+            registrar("erro", "forms.json indisponível: " + local.erro + ".");
+          } else if (!Array.isArray(local.dados)) {
+            registrar("erro", "forms.json não contém uma lista.");
+          } else {
+            registrar("ok", "forms.json carregado (HTTP " + local.status + ", " + local.ms + " ms).");
+            auditarERegistrar(local.dados);
           }
 
-          if (item && item.url && !urlValida(item.url)) {
-            urlsInvalidas.push(identificador);
+          registrar("info", "Planilha em tempo real (Apps Script)");
+          if (!temPlanilha) {
+            registrar("aviso", "Endereço da planilha não configurado em config.js. O catálogo usará só o forms.json.");
+          } else if (planilha.erro) {
+            var login = planilha.texto && /accounts\.google\.com|ServiceLogin/i.test(planilha.texto);
+            registrar("aviso", login
+              ? "A planilha está exigindo login Google. A implantação do Apps Script precisa permitir acesso a “Qualquer pessoa”. O catálogo seguirá usando o forms.json."
+              : "Planilha não respondeu neste navegador (" + planilha.erro + "). O catálogo seguirá usando o forms.json.");
+          } else if (!Array.isArray(planilha.dados)) {
+            registrar("aviso", "A planilha respondeu, mas não com uma lista. O catálogo seguirá usando o forms.json.");
+          } else {
+            registrar("ok", "Planilha respondeu (" + planilha.ms + " ms). Esta é a fonte exibida no catálogo.");
+            auditarERegistrar(planilha.dados);
+
+            if (Array.isArray(local.dados)) {
+              if (assinatura(local.dados) === assinatura(planilha.dados)) {
+                registrar("ok", "forms.json está sincronizado com a planilha.");
+              } else {
+                registrar("aviso", "forms.json difere da planilha. O catálogo mostra a planilha; a cópia será atualizada na próxima execução do GitHub Actions.");
+              }
+            }
           }
+
+          registrar("info", "Disponibilidade dos links externos não é testada aqui: o Google Forms bloqueia esse tipo de verificação pelo navegador (CORS). Um bloqueio não significa que o formulário esteja fora do ar.");
+
+          var dados = (planilha && Array.isArray(planilha.dados)) ? planilha.dados : local.dados;
+          if (Array.isArray(dados)) {
+            var details = document.createElement("details");
+            var summary = document.createElement("summary");
+            var pre = document.createElement("pre");
+            summary.textContent = "Ver dados exibidos no catálogo";
+            pre.textContent = JSON.stringify(dados, null, 2);
+            details.appendChild(summary);
+            details.appendChild(pre);
+            detalhesEl.appendChild(details);
+          }
+
+          finalizar();
         });
+      }
 
-        if (incompletos.length === 0) {
-          sucesso("8. Todos os formulários ativos possuem nome e URL.");
-        } else {
-          falhar("8. Registro(s) incompleto(s): " + incompletos.join(", ") + ".");
-        }
-
-        if (urlsInvalidas.length === 0) {
-          sucesso("9. Todas as URLs dos formulários ativos são válidas.");
-        } else {
-          falhar("9. URL(s) inválida(s): " + urlsInvalidas.join(", ") + ".");
-        }
-
-        var categorias = {};
-        ativos.forEach(function (item) {
-          var categoria = String((item && item.categoria) || "Outros").trim() || "Outros";
-          categorias[categoria] = true;
-        });
-
-        sucesso("10. Catálogo apto para renderização em " + Object.keys(categorias).length + " categoria(s).");
-
-        var details = document.createElement("details");
-        var summary = document.createElement("summary");
-        var pre = document.createElement("pre");
-
-        summary.textContent = "Ver dados recebidos";
-        pre.textContent = JSON.stringify(dados, null, 2);
-
-        details.appendChild(summary);
-        details.appendChild(pre);
-        detalhesEl.appendChild(details);
-
-        finalizar();
-      };
-
-      xhr.onerror = function () {
-        falhar("4. O navegador não conseguiu carregar forms.json.");
-        finalizar();
-      };
-
-      xhr.ontimeout = function () {
-        falhar("4. Tempo limite de 12 segundos ao carregar forms.json.");
-        finalizar();
-      };
-
-      xhr.send();
+      botao.addEventListener("click", executar);
+      executar();
     })();
   </script>
 </body>

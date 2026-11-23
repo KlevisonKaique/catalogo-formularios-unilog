@@ -1,0 +1,11 @@
+{
+  "name": "catalogo-formularios-unilog",
+  "private": true,
+  "description": "Central de Formulários da Unilog Express (site estático no GitHub Pages).",
+  "scripts": {
+    "test": "node --test \"tests/*.test.js\""
+  },
+  "devDependencies": {
+    "jsdom": "26.1.0"
+  }
+}
