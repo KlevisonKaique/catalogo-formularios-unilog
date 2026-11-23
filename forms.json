@@ -84,10 +84,20 @@
     "nome": "Amend",
     "categoria": "Formulários Operacionais",
     "descricao": "Organização de produtos Amend",
-    "url": "https://docs.google.com/forms/d/1YuTOe6a4-gYuWB9W2sOgRlLyN8mwA_EnLapQfRnO_l4/edit?pli=1",
+    "url": "https://docs.google.com/forms/d/1YuTOe6a4-gYuWB9W2sOgRlLyN8mwA_EnLapQfRnO_l4/viewform",
     "icone": "inventory_2",
     "ativo": true,
     "ordem": 2
+  },
+  {
+    "id": 17,
+    "nome": "Hersheys",
+    "categoria": "Formulários Operacionais",
+    "descricao": "Formulário Hersheys",
+    "url": "https://logistica-hersheys-274334.netlify.app/",
+    "icone": "warehouse",
+    "ativo": true,
+    "ordem": 3
   },
   {
     "id": 1,
@@ -108,15 +118,5 @@
     "icone": "inventory_2",
     "ativo": true,
     "ordem": 2
-  },
-  {
-    "id": 17,
-    "nome": "Hersheys",
-    "categoria": "Sistemas Internos",
-    "descricao": "Formulário Hersheys",
-    "url": "https://logistica-hersheys-274334.netlify.app/",
-    "icone": "warehouse",
-    "ativo": true,
-    "ordem": 4
   }
 ]
