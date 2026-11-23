@@ -1,0 +1,32 @@
+name: Testes do catálogo
+
+on:
+  push:
+    branches-ignore:
+      - "gh-pages"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Baixar repositório
+        uses: actions/checkout@v4
+
+      - name: Preparar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Instalar dependências de teste
+        run: npm ci
+
+      - name: Executar testes
+        run: npm test
