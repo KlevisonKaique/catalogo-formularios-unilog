@@ -1,8 +1,10 @@
 name: Sincronizar catálogo de formulários
 
 on:
+  # O catálogo lê a planilha em tempo real; este workflow só mantém
+  # o forms.json (cópia de segurança) atualizado. A cada hora basta.
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "17 * * * *"
   workflow_dispatch:
   push:
     paths:
@@ -50,7 +52,11 @@ jobs:
             exit 5
           fi
 
-          jq -e 'all(.[]; (.nome | type == "string" and length > 0) and (.url | type == "string" and length > 0) and (.ativo == true))' forms.json.tmp > /dev/null
+          # Valida só os ativos; inativos são mantidos e ignorados pelo site.
+          if ! jq -e 'all(.[] | select(.ativo != false); (.nome | type == "string" and length > 0) and (.url | type == "string" and length > 0))' forms.json.tmp > /dev/null; then
+            echo "ERRO: há formulário ativo sem nome ou URL na planilha."
+            exit 7
+          fi
 
           jq . forms.json.tmp > forms.json
           rm -f forms.json.tmp
