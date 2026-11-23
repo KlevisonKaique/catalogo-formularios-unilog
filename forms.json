@@ -108,5 +108,15 @@
     "icone": "inventory_2",
     "ativo": true,
     "ordem": 2
+  },
+  {
+    "id": 17,
+    "nome": "Hersheys",
+    "categoria": "Sistemas Internos",
+    "descricao": "Formulário Hersheys",
+    "url": "https://logistica-hersheys-274334.netlify.app/",
+    "icone": "warehouse",
+    "ativo": true,
+    "ordem": 4
   }
 ]
