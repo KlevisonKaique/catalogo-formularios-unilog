@@ -322,44 +322,50 @@
           temPlanilha ? requisitar(CONFIG.API_URL, 10000) : Promise.resolve(null)
         ]).then(function (res) {
           var local = res[0], planilha = res[1];
+          var localOk = !local.erro && Array.isArray(local.dados);
+          var planilhaOk = planilha && !planilha.erro && Array.isArray(planilha.dados) &&
+            Core.ativos(planilha.dados).length > 0;
 
-          registrar("info", "forms.json (cópia publicada no GitHub Pages)");
+          /* 1. Situação de cada fonte (só conexão, sem repetir a auditoria) */
+          registrar("info", "Fontes de dados");
+
           if (local.erro) {
-            registrar("erro", "forms.json indisponível: " + local.erro + ".");
+            registrar("erro", "forms.json (cópia de segurança) indisponível: " + local.erro + ".");
           } else if (!Array.isArray(local.dados)) {
             registrar("erro", "forms.json não contém uma lista.");
           } else {
-            registrar("ok", "forms.json carregado (HTTP " + local.status + ", " + local.ms + " ms).");
-            auditarERegistrar(local.dados);
+            registrar("ok", "forms.json (cópia de segurança) carregado em " + local.ms + " ms.");
           }
 
-          registrar("info", "Planilha em tempo real (Apps Script)");
           if (!temPlanilha) {
-            registrar("aviso", "Endereço da planilha não configurado em config.js. O catálogo usará só o forms.json.");
+            registrar("aviso", "Endereço da planilha não configurado em config.js. O catálogo usa só o forms.json.");
           } else if (planilha.erro) {
-            var login = planilha.texto && /accounts\.google\.com|ServiceLogin/i.test(planilha.texto);
-            registrar("aviso", login
-              ? "A planilha está exigindo login Google. A implantação do Apps Script precisa permitir acesso a “Qualquer pessoa”. O catálogo seguirá usando o forms.json."
-              : "Planilha não respondeu neste navegador (" + planilha.erro + "). O catálogo seguirá usando o forms.json.");
-          } else if (!Array.isArray(planilha.dados)) {
-            registrar("aviso", "A planilha respondeu, mas não com uma lista. O catálogo seguirá usando o forms.json.");
+            registrar("aviso", "Planilha não respondeu neste navegador (" + planilha.erro + "). O catálogo está usando o forms.json.");
+          } else if (!planilhaOk) {
+            registrar("aviso", "A planilha respondeu sem formulários ativos válidos. O catálogo está usando o forms.json.");
           } else {
-            registrar("ok", "Planilha respondeu (" + planilha.ms + " ms). Esta é a fonte exibida no catálogo.");
-            auditarERegistrar(planilha.dados);
+            registrar("ok", "Planilha respondeu em " + planilha.ms + " ms.");
+          }
 
-            if (Array.isArray(local.dados)) {
-              if (assinatura(local.dados) === assinatura(planilha.dados)) {
-                registrar("ok", "forms.json está sincronizado com a planilha.");
-              } else {
-                registrar("aviso", "forms.json difere da planilha. O catálogo mostra a planilha; a cópia será atualizada na próxima execução do GitHub Actions.");
-              }
+          if (planilhaOk && localOk) {
+            if (assinatura(local.dados) === assinatura(planilha.dados)) {
+              registrar("ok", "forms.json está sincronizado com a planilha.");
+            } else {
+              registrar("aviso", "forms.json difere da planilha. O catálogo mostra a planilha; a cópia será atualizada na próxima execução do GitHub Actions.");
             }
+          }
+
+          /* 2. Auditoria uma única vez, dos dados que o catálogo exibe */
+          var dados = planilhaOk ? planilha.dados : (localOk ? local.dados : null);
+
+          if (dados) {
+            registrar("info", "Registros exibidos no catálogo (fonte: " + (planilhaOk ? "planilha" : "forms.json") + ")");
+            auditarERegistrar(dados);
           }
 
           registrar("info", "Disponibilidade dos links externos não é testada aqui: o Google Forms bloqueia esse tipo de verificação pelo navegador (CORS). Um bloqueio não significa que o formulário esteja fora do ar.");
 
-          var dados = (planilha && Array.isArray(planilha.dados)) ? planilha.dados : local.dados;
-          if (Array.isArray(dados)) {
+          if (dados) {
             var details = document.createElement("details");
             var summary = document.createElement("summary");
             var pre = document.createElement("pre");
